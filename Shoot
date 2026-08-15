@@ -1,0 +1,264 @@
+-- this is the part of the shooting script (heya hiddendevs staff hope you are all good)
+
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+local function loadChar(character)
+	if character:FindFirstChild("BallAttachmentTime") then return end
+
+	local heldTime = Instance.new("NumberValue")
+	heldTime.Name = "BallAttachmentTime"
+	heldTime.Parent = character
+end
+
+local function loadPlayer(player)
+	player.CharacterAdded:Connect(loadChar)
+	if player.Character then
+		loadChar(player.Character)
+	end
+end
+
+Players.PlayerAdded:Connect(loadPlayer)
+
+for _, player in ipairs(Players:GetPlayers()) do
+	loadPlayer(player)
+end
+
+local function takeBall(player, oldOwner)
+	local character = player.Character
+	if not character then return end
+
+	if not character:FindFirstChildOfClass("Humanoid") then return end
+
+	if oldOwner then
+		local ball = oldOwner:FindFirstChild("Ball") or workspace:FindFirstChild("Ball") or character:FindFirstChild("Ball")
+		if not ball or not ball:FindFirstChild("CanSteal") or not ball.CanSteal.Value then
+			local highlight = oldOwner:FindFirstChild("Highlight")
+			local head = oldOwner:FindFirstChild("Head")
+			if highlight then highlight.Enabled = false end
+			if head and head:FindFirstChild("Team") then head.Team.Enabled = false end
+			return
+		end
+
+		ball.Motor6D.Part0 = character:WaitForChild("HumanoidRootPart")
+		ball.Parent = character
+		print("Ball transferred to", character.Name)
+
+		local oldHumanoid = oldOwner:FindFirstChildOfClass("Humanoid")
+		if oldHumanoid then
+			local oldSpeed = oldHumanoid.WalkSpeed
+			oldHumanoid.WalkSpeed = 1
+			local values = oldOwner:FindFirstChild("values")
+			local stolen = values and values:FindFirstChild("Stolen")
+			if stolen then stolen.Value = true end
+
+			task.delay(1.2, function()
+				if oldHumanoid.Parent then
+					oldHumanoid.WalkSpeed = oldSpeed
+					if stolen then stolen.Value = false end
+				end
+			end)
+		end
+
+		ball.CanSteal.Value = false
+
+		local sound = game:GetService("SoundService").Tackle
+		sound.Looped = false
+		sound:Play()
+
+		local stolenEffect = oldOwner:FindFirstChild("Stolen")
+		if stolenEffect then
+			local fade = TweenService:Create(
+				stolenEffect,
+				TweenInfo.new(0.8, Enum.EasingStyle.Linear),
+				{FillTransparency = 1}
+			)
+			stolenEffect.FillTransparency = 0.2
+			fade:Play()
+		end
+
+		task.delay(1.5, function()
+			if ball.Parent and ball:FindFirstChild("CanSteal") then
+				ball.CanSteal.Value = true
+			end
+
+			local values = oldOwner:FindFirstChild("values")
+			local canSprint = values and values:FindFirstChild("CanSprint")
+			if canSprint then canSprint.Value = true end
+		end)
+	end
+end
+
+local function letGo(player, target, power)
+	local character = player.Character
+	if not character then return end
+
+	local ball = character:FindFirstChild("Ball")
+	if not ball then return end
+
+	ball.Motor6D.Part0 = nil
+	ball:SetNetworkOwner(player)
+	ball.Parent = workspace
+	character.Highlight.Enabled = false
+	character:FindFirstChild("Head").Team.Enabled = false
+end
+
+local function shotVelocity(origin, target, travelTime)
+	return (target - origin) / travelTime
+end
+
+local function blockPickup(character)
+	local value = character:FindFirstChild("CanPickup")
+	if value and value:IsA("BoolValue") then
+		value.Value = false
+	end
+end
+
+local function allowPickup(character)
+	local value = character:FindFirstChild("CanPickup")
+	if value and value:IsA("BoolValue") then
+		value.Value = true
+	end
+end
+
+local function fadeTrail(effects, duration)
+	local started = os.clock()
+
+	while #effects > 0 do
+		local alpha = math.clamp((os.clock() - started) / duration, 0, 1)
+
+		for i = #effects, 1, -1 do
+			local data = effects[i]
+			local effect = data.effect
+
+			if not effect.Parent then
+				table.remove(effects, i)
+			else
+				local first = data.first + alpha * (1 - data.first)
+				local last = data.last + alpha * (1 - data.last)
+				effect.Transparency = NumberSequence.new(first, last)
+			end
+		end
+
+		if alpha >= 1 then break end
+		task.wait()
+	end
+
+	for _, data in ipairs(effects) do
+		data.effect:Destroy()
+	end
+end
+
+local function shoot(player, origin, target, power, moveDirection)
+	local character = player.Character
+	if not character then return end
+
+	local ball = character:FindFirstChild("Ball")
+	if not ball then return end
+
+	local distance = (target - origin).Magnitude
+	local travelTime = math.clamp(distance / 100, 0.2, 0.3)
+
+	ball.Velocity = Vector3.zero
+	ball.RotVelocity = Vector3.zero
+
+	local strongVFX = character:WaitForChild("HumanoidRootPart"):WaitForChild("HitVFX")
+	local weakVFX = ball:WaitForChild("WeakHitVFX")
+
+	for _, emitter in ipairs(strongVFX:GetChildren()) do
+		if emitter:IsA("ParticleEmitter") and power >= 35 then
+			emitter:Emit(3)
+		end
+	end
+
+	for _, emitter in ipairs(weakVFX:GetChildren()) do
+		if emitter:IsA("ParticleEmitter") and power <= 35 then
+			emitter:Emit(3)
+		end
+	end
+
+	local traits = character:FindFirstChild("Traits")
+	local tank = traits and traits:FindFirstChild("Tank")
+	if tank and tank.Value and power == 100 then
+		power = 115
+	end
+
+	local velocity = shotVelocity(origin, target, travelTime) * (power / 40.6)
+	local lockedCharacters = {}
+	local pickupTime = tick() + 0.6
+
+	for _, otherPlayer in ipairs(Players:GetPlayers()) do
+		local otherCharacter = otherPlayer.Character
+		if otherCharacter then
+			blockPickup(otherCharacter)
+			otherCharacter:SetAttribute("NoPickupUntil", pickupTime)
+			table.insert(lockedCharacters, otherCharacter)
+		end
+	end
+
+	character:SetAttribute("NoPickupUntil", pickupTime)
+	ball.CanBeTrapped.Value = false
+
+	task.delay(0.3, function()
+		if ball.Parent and ball:FindFirstChild("CanBeTrapped") then
+			ball.CanBeTrapped.Value = true
+		end
+	end)
+
+	task.delay(0.6, function()
+		for _, lockedCharacter in ipairs(lockedCharacters) do
+			if lockedCharacter.Parent then
+				allowPickup(lockedCharacter)
+			end
+		end
+	end)
+
+	ball.Motor6D.Part0 = nil
+	ball.Parent = workspace
+	ball.CanCollide = true
+	ball.Anchored = false
+	ball:SetNetworkOwner(player)
+
+	local effects = ball:WaitForChild("TrailFolder")
+	local fading = {}
+
+	for _, effect in ipairs(effects:GetChildren()) do
+		if effect:IsA("ParticleEmitter") or effect:IsA("Trail") then
+			local copy = effect:Clone()
+			copy.Parent = ball
+			copy.Enabled = true
+
+			local points = copy.Transparency.Keypoints
+			table.insert(fading, {
+				effect = copy,
+				first = points[1].Value,
+				last = points[#points].Value,
+			})
+		end
+	end
+
+	if #fading > 0 then
+		task.spawn(fadeTrail, fading, 1.6)
+	end
+
+	local force = Instance.new("BodyVelocity")
+	force.Velocity = velocity
+	force.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+	force.P = 5000000000
+	force.Parent = ball
+
+	task.delay(travelTime, function()
+		if force then
+			force:Destroy()
+		end
+	end)
+
+	if character:FindFirstChild("Highlight") then
+		character.Highlight.Enabled = false
+	end
+
+	if character:FindFirstChild("Head") and character.Head:FindFirstChild("Team") then
+		character.Head.Team.Enabled = false
+	end
+end
