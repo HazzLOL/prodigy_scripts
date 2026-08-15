@@ -1,4 +1,5 @@
 -- this is the part of the shooting script (heya hiddendevs staff hope you are all good)
+-- M2 TO GRAB THE BALL IN-GAME, M1 TO SHOOT
 
 
 local Players = game:GetService("Players")
